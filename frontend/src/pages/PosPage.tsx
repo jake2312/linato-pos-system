@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../utils/api";
 import { formatPhp } from "../utils/format";
@@ -10,6 +10,14 @@ import type {
   PosSettings,
   Product,
 } from "../types";
+import { Card } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
+import { Badge } from "../components/ui/Badge";
+import { Skeleton } from "../components/ui/Skeleton";
+import { Modal } from "../components/ui/Modal";
+import { useToast } from "../providers/ToastProvider";
+import { useConfirm } from "../providers/ConfirmProvider";
 
 type CartItem = {
   product_id: number;
@@ -28,6 +36,9 @@ const dineTypes = [
 
 export function PosPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
+  const { confirm } = useConfirm();
+
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
@@ -44,9 +55,8 @@ export function PosPage() {
   const [taxRate, setTaxRate] = useState(12);
   const [rounding, setRounding] = useState(0);
   const [paymentOpen, setPaymentOpen] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const { data: categories } = useQuery({
+  const { data: categories, isLoading: loadingCategories } = useQuery({
     queryKey: ["categories"],
     queryFn: async () => {
       const response = await api.get<{ data: Category[] }>("/categories?all=1");
@@ -54,7 +64,7 @@ export function PosPage() {
     },
   });
 
-  const { data: products } = useQuery({
+  const { data: products, isLoading: loadingProducts } = useQuery({
     queryKey: ["products", search, categoryId],
     queryFn: async () => {
       const params = new URLSearchParams({ all: "1" });
@@ -83,11 +93,14 @@ export function PosPage() {
       );
       return response.data.data.value;
     },
-    onSuccess: (data) => {
-      setTaxRate(data.tax_rate);
-      setServiceRate(data.service_charge_rate);
-    },
   });
+
+  useEffect(() => {
+    if (settings) {
+      setTaxRate(settings.tax_rate);
+      setServiceRate(settings.service_charge_rate);
+    }
+  }, [settings]);
 
   const { data: heldOrders } = useQuery({
     queryKey: ["held-orders"],
@@ -106,7 +119,9 @@ export function PosPage() {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["held-orders"] });
       setActiveOrderId(order.id);
-      setStatusMessage(`Order ${order.receipt_number} created.`);
+      toast.success("Order created", {
+        message: `Receipt ${order.receipt_number} saved.`,
+      });
     },
   });
 
@@ -114,9 +129,6 @@ export function PosPage() {
     mutationFn: async ({ id, payload }: { id: number; payload: any }) => {
       const response = await api.patch<{ data: Order }>(`/orders/${id}`, payload);
       return response.data.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["orders"] });
     },
   });
 
@@ -128,16 +140,16 @@ export function PosPage() {
     onSuccess: (order) => {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["kds"] });
-      setStatusMessage(`Order ${order.receipt_number} confirmed.`);
+      toast.success("Order confirmed", {
+        message: `Sent to kitchen: ${order.receipt_number}`,
+      });
       setPaymentOpen(true);
     },
   });
 
   const holdOrderMutation = useMutation({
     mutationFn: async (id: number) => api.post(`/orders/${id}/hold`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["held-orders"] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["held-orders"] }),
   });
 
   const resumeOrderMutation = useMutation({
@@ -158,9 +170,6 @@ export function PosPage() {
       });
       return response.data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["orders"] });
-    },
   });
 
   const totals = useMemo(() => {
@@ -176,14 +185,7 @@ export function PosPage() {
     const serviceCharge = net * (serviceRate / 100);
     const taxAmount = net * (taxRate / 100);
     const total = net + serviceCharge + taxAmount + rounding;
-    return {
-      subtotal,
-      itemDiscount,
-      net,
-      serviceCharge,
-      taxAmount,
-      total,
-    };
+    return { subtotal, itemDiscount, net, serviceCharge, taxAmount, total };
   }, [cartItems, orderDiscount, serviceRate, taxRate, rounding]);
 
   const addToCart = (product: Product) => {
@@ -218,7 +220,14 @@ export function PosPage() {
     );
   };
 
-  const removeItem = (productId: number) => {
+  const removeItem = async (productId: number) => {
+    const ok = await confirm({
+      title: "Remove item?",
+      description: "This will remove the item from the cart.",
+      confirmText: "Remove",
+      tone: "danger",
+    });
+    if (!ok) return;
     setCartItems((prev) => prev.filter((item) => item.product_id !== productId));
   };
 
@@ -230,7 +239,6 @@ export function PosPage() {
     setPhone("");
     setAddress("");
     setTableId(null);
-    setStatusMessage(null);
   };
 
   const buildPayload = () => ({
@@ -264,16 +272,18 @@ export function PosPage() {
   };
 
   const handleConfirm = async () => {
-    if (cartItems.length === 0) return;
-    if (dineType === "dine_in" && !tableId) {
-      setStatusMessage("Select a table for dine-in orders.");
+    if (cartItems.length === 0) {
+      toast.warning("Cart is empty", { message: "Add items to proceed." });
       return;
     }
-    if (
-      dineType === "delivery" &&
-      (!customerName || !phone || !address)
-    ) {
-      setStatusMessage("Delivery details are required.");
+    if (dineType === "dine_in" && !tableId) {
+      toast.warning("Select a table", { message: "Table is required." });
+      return;
+    }
+    if (dineType === "delivery" && (!customerName || !phone || !address)) {
+      toast.warning("Missing delivery details", {
+        message: "Name, phone, and address are required.",
+      });
       return;
     }
     const order = await submitOrder();
@@ -281,16 +291,18 @@ export function PosPage() {
   };
 
   const handleHold = async () => {
-    if (cartItems.length === 0) return;
-    if (dineType === "dine_in" && !tableId) {
-      setStatusMessage("Select a table for dine-in orders.");
+    if (cartItems.length === 0) {
+      toast.warning("Cart is empty", { message: "Add items to hold." });
       return;
     }
-    if (
-      dineType === "delivery" &&
-      (!customerName || !phone || !address)
-    ) {
-      setStatusMessage("Delivery details are required.");
+    if (dineType === "dine_in" && !tableId) {
+      toast.warning("Select a table", { message: "Table is required." });
+      return;
+    }
+    if (dineType === "delivery" && (!customerName || !phone || !address)) {
+      toast.warning("Missing delivery details", {
+        message: "Name, phone, and address are required.",
+      });
       return;
     }
     if (!activeOrderId) {
@@ -298,9 +310,10 @@ export function PosPage() {
         ...buildPayload(),
         hold: true,
       });
-      setStatusMessage(`Order ${order.receipt_number} held.`);
+      toast.info("Order held", { message: order.receipt_number });
     } else {
       await holdOrderMutation.mutateAsync(activeOrderId);
+      toast.info("Order held", { message: "Saved to held list." });
     }
     resetCart();
   };
@@ -338,91 +351,114 @@ export function PosPage() {
         notes: item.notes ?? "",
       }))
     );
+    toast.success("Order resumed", { message: order.receipt_number });
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
+    <div className="grid gap-6 xl:grid-cols-[1.7fr_1fr]">
       <section className="space-y-4">
-        <div className="rounded-2xl bg-white p-4 shadow-card">
+        <Card>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h1 className="heading text-2xl">POS Terminal</h1>
               <p className="text-sm text-slate-500">
-                Select items and confirm orders fast.
+                Search and tap items to build an order quickly.
               </p>
             </div>
-            {statusMessage && (
-              <div className="rounded-xl bg-basil/10 px-3 py-2 text-sm text-basil">
-                {statusMessage}
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <Badge tone="info">Tax {taxRate}%</Badge>
+              <Badge tone="warning">Service {serviceRate}%</Badge>
+            </div>
           </div>
-          <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
-            <input
-              className="w-full rounded-xl border-slate-200"
+          <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto]">
+            <Input
+              label="Search"
               placeholder="Search products or SKU"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
-            <select
-              className="w-full rounded-xl border-slate-200 lg:w-48"
-              value={categoryId ?? ""}
-              onChange={(event) =>
-                setCategoryId(event.target.value ? Number(event.target.value) : null)
-              }
-            >
-              <option value="">All categories</option>
-              {categories?.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-end gap-2 overflow-x-auto pb-1">
+              <Button
+                tone={!categoryId ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => setCategoryId(null)}
+              >
+                All
+              </Button>
+              {loadingCategories ? (
+                <Skeleton className="h-8 w-24" />
+              ) : (
+                categories?.map((category) => (
+                  <Button
+                    key={category.id}
+                    tone={categoryId === category.id ? "primary" : "secondary"}
+                    size="sm"
+                    onClick={() => setCategoryId(category.id)}
+                  >
+                    {category.name}
+                  </Button>
+                ))
+              )}
+            </div>
           </div>
-        </div>
+        </Card>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-          {products?.map((product) => (
-            <button
-              key={product.id}
-              className="rounded-2xl bg-white p-4 text-left shadow-card transition hover:-translate-y-1 hover:shadow-lg"
-              onClick={() => addToCart(product)}
-            >
-              <p className="font-semibold">{product.name}</p>
-              <p className="text-xs text-slate-500">{product.sku}</p>
-              <p className="mt-2 text-sm font-semibold text-basil">
-                {formatPhp(Number(product.price))}
-              </p>
-            </button>
-          ))}
+          {loadingProducts &&
+            Array.from({ length: 6 }).map((_, index) => (
+              <Card key={index} className="h-32">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="mt-3 h-4 w-28" />
+                <Skeleton className="mt-6 h-5 w-16" />
+              </Card>
+            ))}
+          {!loadingProducts &&
+            products?.map((product) => (
+              <button
+                key={product.id}
+                className="rounded-2xl bg-white p-4 text-left shadow-card transition hover:-translate-y-1 hover:shadow-lg"
+                onClick={() => addToCart(product)}
+              >
+                <p className="font-semibold">{product.name}</p>
+                <p className="text-xs text-slate-500">{product.sku}</p>
+                <p className="mt-4 text-sm font-semibold text-basil">
+                  {formatPhp(Number(product.price))}
+                </p>
+              </button>
+            ))}
+          {!loadingProducts && !products?.length && (
+            <Card className="col-span-full text-center text-sm text-slate-500">
+              No products found. Try another category.
+            </Card>
+          )}
         </div>
       </section>
 
       <section className="space-y-4">
-        <div className="rounded-2xl bg-white p-4 shadow-card">
+        <Card className="space-y-3">
           <h2 className="heading text-lg">Order Details</h2>
-          <div className="mt-3 grid gap-3">
-            <div className="flex flex-wrap gap-2">
-              {dineTypes.map((type) => (
-                <button
-                  key={type.value}
-                  className={`rounded-xl px-3 py-2 text-sm font-semibold ${
-                    dineType === type.value
-                      ? "bg-basil text-white"
-                      : "bg-slate-100 text-slate-600"
-                  }`}
-                  onClick={() => setDineType(type.value)}
-                >
-                  {type.label}
-                </button>
-              ))}
-            </div>
-            {dineType === "dine_in" && (
+          <div className="flex flex-wrap gap-2">
+            {dineTypes.map((type) => (
+              <Button
+                key={type.value}
+                tone={dineType === type.value ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => setDineType(type.value)}
+              >
+                {type.label}
+              </Button>
+            ))}
+          </div>
+          {dineType === "dine_in" && (
+            <label className="text-xs font-semibold uppercase text-slate-500">
+              Table
               <select
-                className="rounded-xl border-slate-200"
+                className="mt-1 w-full rounded-xl border-slate-200 text-sm"
                 value={tableId ?? ""}
                 onChange={(event) =>
-                  setTableId(event.target.value ? Number(event.target.value) : null)
+                  setTableId(
+                    event.target.value ? Number(event.target.value) : null
+                  )
                 }
               >
                 <option value="">Select table</option>
@@ -432,41 +468,35 @@ export function PosPage() {
                   </option>
                 ))}
               </select>
-            )}
-            {dineType === "delivery" && (
-              <div className="grid gap-2">
-                <input
-                  className="rounded-xl border-slate-200"
-                  placeholder="Customer name"
-                  value={customerName}
-                  onChange={(event) => setCustomerName(event.target.value)}
-                />
-                <input
-                  className="rounded-xl border-slate-200"
-                  placeholder="Phone"
-                  value={phone}
-                  onChange={(event) => setPhone(event.target.value)}
-                />
-                <input
-                  className="rounded-xl border-slate-200"
-                  placeholder="Address"
-                  value={address}
-                  onChange={(event) => setAddress(event.target.value)}
-                />
-              </div>
-            )}
-          </div>
-        </div>
+            </label>
+          )}
+          {dineType === "delivery" && (
+            <div className="grid gap-2">
+              <Input
+                label="Customer name"
+                value={customerName}
+                onChange={(event) => setCustomerName(event.target.value)}
+              />
+              <Input
+                label="Phone"
+                value={phone}
+                onChange={(event) => setPhone(event.target.value)}
+              />
+              <Input
+                label="Address"
+                value={address}
+                onChange={(event) => setAddress(event.target.value)}
+              />
+            </div>
+          )}
+        </Card>
 
-        <div className="rounded-2xl bg-white p-4 shadow-card">
+        <Card>
           <div className="flex items-center justify-between">
             <h2 className="heading text-lg">Cart</h2>
-            <button
-              className="text-xs font-semibold text-rose"
-              onClick={resetCart}
-            >
+            <Button tone="ghost" size="sm" onClick={resetCart}>
               Clear
-            </button>
+            </Button>
           </div>
           <div className="mt-3 space-y-3">
             {cartItems.length === 0 && (
@@ -474,32 +504,55 @@ export function PosPage() {
             )}
             {cartItems.map((item) => (
               <div key={item.product_id} className="rounded-xl border p-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="font-semibold">{item.name}</p>
                     <p className="text-xs text-slate-500">
                       {formatPhp(item.price)}
                     </p>
                   </div>
-                  <button
-                    className="text-xs font-semibold text-rose"
+                  <Button
+                    tone="danger"
+                    size="sm"
                     onClick={() => removeItem(item.product_id)}
                   >
                     Remove
-                  </button>
+                  </Button>
                 </div>
-                <div className="mt-2 grid grid-cols-3 gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    className="rounded-lg border-slate-200 text-sm"
-                    value={item.qty}
-                    onChange={(event) =>
-                      updateItem(item.product_id, {
-                        qty: Number(event.target.value),
-                      })
-                    }
-                  />
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <div className="flex items-center gap-2 rounded-xl border px-2 py-1">
+                    <Button
+                      tone="ghost"
+                      size="sm"
+                      onClick={() =>
+                        updateItem(item.product_id, {
+                          qty: Math.max(1, item.qty - 1),
+                        })
+                      }
+                    >
+                      -
+                    </Button>
+                    <input
+                      type="number"
+                      min={1}
+                      className="w-full border-none text-center text-sm focus:ring-0"
+                      value={item.qty}
+                      onChange={(event) =>
+                        updateItem(item.product_id, {
+                          qty: Number(event.target.value),
+                        })
+                      }
+                    />
+                    <Button
+                      tone="ghost"
+                      size="sm"
+                      onClick={() =>
+                        updateItem(item.product_id, { qty: item.qty + 1 })
+                      }
+                    >
+                      +
+                    </Button>
+                  </div>
                   <input
                     type="number"
                     min={0}
@@ -516,9 +569,7 @@ export function PosPage() {
                     className="rounded-lg border-slate-200 text-sm"
                     value={item.notes}
                     onChange={(event) =>
-                      updateItem(item.product_id, {
-                        notes: event.target.value,
-                      })
+                      updateItem(item.product_id, { notes: event.target.value })
                     }
                     placeholder="Notes"
                   />
@@ -526,19 +577,16 @@ export function PosPage() {
               </div>
             ))}
           </div>
-        </div>
+        </Card>
 
-        <div className="rounded-2xl bg-white p-4 shadow-card">
+        <Card className="lg:sticky lg:top-6">
           <h2 className="heading text-lg">Totals</h2>
           <div className="mt-3 space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span>Subtotal</span>
-              <span>{formatPhp(totals.subtotal)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Item discounts</span>
-              <span>-{formatPhp(totals.itemDiscount)}</span>
-            </div>
+            <Row label="Subtotal" value={formatPhp(totals.subtotal)} />
+            <Row
+              label="Item discounts"
+              value={`-${formatPhp(totals.itemDiscount)}`}
+            />
             <div className="flex items-center justify-between gap-2">
               <span>Order discount</span>
               <input
@@ -584,22 +632,16 @@ export function PosPage() {
             </div>
           </div>
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <button
-              className="rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700"
-              onClick={handleHold}
-            >
+            <Button tone="secondary" onClick={handleHold}>
               Hold Order
-            </button>
-            <button
-              className="rounded-xl bg-basil px-4 py-2 text-sm font-semibold text-white"
-              onClick={handleConfirm}
-            >
+            </Button>
+            <Button tone="primary" onClick={handleConfirm}>
               Confirm Order
-            </button>
+            </Button>
           </div>
-        </div>
+        </Card>
 
-        <div className="rounded-2xl bg-white p-4 shadow-card">
+        <Card>
           <h2 className="heading text-lg">Held Orders</h2>
           <div className="mt-3 space-y-2">
             {heldOrders?.length ? (
@@ -619,22 +661,24 @@ export function PosPage() {
               <p className="text-sm text-slate-500">No held orders.</p>
             )}
           </div>
-        </div>
+        </Card>
       </section>
 
       {paymentOpen && activeOrderId && (
         <PaymentModal
           total={totals.total}
           onClose={() => setPaymentOpen(false)}
-          onSubmit={async (data) => {
+          onComplete={() => {
+            setPaymentOpen(false);
+            resetCart();
+          }}
+          onAddPayment={async (data) => {
             await addPaymentMutation.mutateAsync({
               orderId: activeOrderId,
               method: data.method,
               amount: data.amount,
               reference_no: data.reference_no,
             });
-            setPaymentOpen(false);
-            resetCart();
           }}
         />
       )}
@@ -642,77 +686,135 @@ export function PosPage() {
   );
 }
 
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <span>{label}</span>
+      <span>{value}</span>
+    </div>
+  );
+}
+
 function PaymentModal({
   total,
   onClose,
-  onSubmit,
+  onComplete,
+  onAddPayment,
 }: {
   total: number;
   onClose: () => void;
-  onSubmit: (data: {
+  onComplete: () => void;
+  onAddPayment: (data: {
     method: "cash" | "gcash" | "card";
     amount: number;
     reference_no?: string;
-  }) => void;
+  }) => Promise<void>;
 }) {
+  const toast = useToast();
   const [method, setMethod] = useState<"cash" | "gcash" | "card">("cash");
   const [amount, setAmount] = useState(total);
   const [reference, setReference] = useState("");
+  const [paid, setPaid] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  const remaining = Math.max(total - paid, 0);
+  const change = method === "cash" ? Math.max(amount - remaining, 0) : 0;
+
+  const handleAddPayment = async () => {
+    if (amount <= 0) {
+      toast.warning("Invalid amount", { message: "Enter a valid amount." });
+      return;
+    }
+    setLoading(true);
+    try {
+      await onAddPayment({
+        method,
+        amount,
+        reference_no: reference || undefined,
+      });
+      setPaid((prev) => prev + amount);
+      setAmount(Math.max(total - (paid + amount), 0));
+      setReference("");
+      toast.success("Payment added", {
+        message: `${formatPhp(amount)} via ${method}`,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-card">
-        <h3 className="heading text-lg">Add Payment</h3>
-        <div className="mt-4 space-y-3">
-          <div className="flex gap-2">
-            {(["cash", "gcash", "card"] as const).map((type) => (
-              <button
-                key={type}
-                className={`rounded-lg px-3 py-2 text-xs font-semibold uppercase ${
-                  method === type ? "bg-basil text-white" : "bg-slate-100"
-                }`}
-                onClick={() => setMethod(type)}
-              >
-                {type}
-              </button>
-            ))}
-          </div>
-          <input
-            type="number"
-            className="w-full rounded-xl border-slate-200"
-            value={amount}
-            onChange={(event) => setAmount(Number(event.target.value))}
-          />
-          {(method === "gcash" || method === "card") && (
-            <input
-              className="w-full rounded-xl border-slate-200"
-              placeholder="Reference number"
-              value={reference}
-              onChange={(event) => setReference(event.target.value)}
-            />
+    <Modal
+      open
+      title="Collect Payment"
+      description="Add one or more payments to settle the bill."
+      onClose={onClose}
+      footer={
+        <>
+          <Button tone="secondary" onClick={onClose}>
+            Close
+          </Button>
+          <Button
+            tone="primary"
+            onClick={onComplete}
+            disabled={remaining > 0}
+          >
+            Complete
+          </Button>
+        </>
+      }
+    >
+      <div
+        className="space-y-4"
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            handleAddPayment();
+          }
+        }}
+      >
+        <div className="rounded-2xl bg-slate-50 p-4 text-sm">
+          <Row label="Total" value={formatPhp(total)} />
+          <Row label="Paid" value={formatPhp(paid)} />
+          <Row label="Remaining" value={formatPhp(remaining)} />
+          {change > 0 && (
+            <Row label="Change" value={formatPhp(change)} />
           )}
         </div>
-        <div className="mt-6 flex justify-end gap-2">
-          <button
-            className="rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold"
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <button
-            className="rounded-xl bg-basil px-4 py-2 text-sm font-semibold text-white"
-            onClick={() =>
-              onSubmit({
-                method,
-                amount,
-                reference_no: reference || undefined,
-              })
-            }
-          >
-            Save Payment
-          </button>
+        <div className="flex gap-2">
+          {(["cash", "gcash", "card"] as const).map((type) => (
+            <Button
+              key={type}
+              tone={method === type ? "primary" : "secondary"}
+              size="sm"
+              onClick={() => setMethod(type)}
+            >
+              {type}
+            </Button>
+          ))}
         </div>
+        <Input
+          label="Amount tendered"
+          type="number"
+          value={amount}
+          onChange={(event) => setAmount(Number(event.target.value))}
+        />
+        {(method === "gcash" || method === "card") && (
+          <Input
+            label="Reference number"
+            value={reference}
+            onChange={(event) => setReference(event.target.value)}
+          />
+        )}
+        <Button onClick={handleAddPayment} loading={loading}>
+          Add Payment
+        </Button>
+        {remaining <= 0 && (
+          <div className="rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+            Payment complete. Click “Complete” to finish.
+          </div>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }

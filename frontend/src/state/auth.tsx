@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { api } from "../utils/api";
 
 export type User = {
@@ -20,7 +21,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const TOKEN_KEY = "linato_token";
 const USER_KEY = "linato_user";
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(
     localStorage.getItem(TOKEN_KEY)
   );
@@ -30,7 +31,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
 
   const login = async (email: string, password: string) => {
-    const response = await api.post("/auth/login", { email, password });
+    const response = await api.post(
+      "/auth/login",
+      { email, password },
+      { skipToast: true }
+    );
     const nextToken = response.data.token as string;
     const nextUser = response.data.user as User;
 

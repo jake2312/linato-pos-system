@@ -1,8 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../utils/api";
 import { formatPhp } from "../utils/format";
 import type { Category, DiningTable, Product } from "../types";
+import { Card } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
+import { Badge } from "../components/ui/Badge";
+import { useConfirm } from "../providers/ConfirmProvider";
+import { useToast } from "../providers/ToastProvider";
 
 const tabs = [
   "Products",
@@ -19,25 +25,24 @@ export function AdminPage() {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl bg-white p-4 shadow-card">
+      <Card>
         <h1 className="heading text-2xl">Admin Dashboard</h1>
         <p className="text-sm text-slate-500">
-          Manage products, users, and reports.
+          Manage catalog, users, and reports.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           {tabs.map((item) => (
-            <button
+            <Button
               key={item}
-              className={`rounded-xl px-3 py-2 text-xs font-semibold ${
-                tab === item ? "bg-basil text-white" : "bg-slate-100"
-              }`}
+              tone={tab === item ? "primary" : "secondary"}
+              size="sm"
               onClick={() => setTab(item)}
             >
               {item}
-            </button>
+            </Button>
           ))}
         </div>
-      </div>
+      </Card>
 
       {tab === "Products" && <ProductsSection />}
       {tab === "Categories" && <CategoriesSection />}
@@ -52,6 +57,8 @@ export function AdminPage() {
 
 function CategoriesSection() {
   const queryClient = useQueryClient();
+  const toast = useToast();
+  const { confirm } = useConfirm();
   const [name, setName] = useState("");
   const [editing, setEditing] = useState<Category | null>(null);
 
@@ -74,6 +81,7 @@ function CategoriesSection() {
       queryClient.invalidateQueries({ queryKey: ["admin-categories"] });
       setName("");
       setEditing(null);
+      toast.success("Category saved");
     },
   });
 
@@ -83,26 +91,35 @@ function CategoriesSection() {
       queryClient.invalidateQueries({ queryKey: ["admin-categories"] }),
   });
 
+  const handleDelete = async (category: Category) => {
+    const ok = await confirm({
+      title: "Delete category?",
+      description: `This will remove ${category.name}.`,
+      confirmText: "Delete",
+      tone: "danger",
+      requireTextConfirm: "DELETE",
+    });
+    if (!ok) return;
+    await deleteMutation.mutateAsync(category.id);
+    toast.success("Category deleted");
+  };
+
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
-      <div className="rounded-2xl bg-white p-4 shadow-card">
+    <div className="grid gap-4 lg:grid-cols-[1fr_1.3fr]">
+      <Card>
         <h2 className="heading text-lg">Category Editor</h2>
-        <div className="mt-3 space-y-2">
-          <input
-            className="w-full rounded-xl border-slate-200"
-            placeholder="Category name"
+        <div className="mt-3 space-y-3">
+          <Input
+            label="Category name"
             value={name}
             onChange={(event) => setName(event.target.value)}
           />
-          <button
-            className="rounded-xl bg-basil px-4 py-2 text-sm font-semibold text-white"
-            onClick={() => saveMutation.mutate()}
-          >
+          <Button onClick={() => saveMutation.mutate()}>
             {editing ? "Update" : "Create"}
-          </button>
+          </Button>
         </div>
-      </div>
-      <div className="rounded-2xl bg-white p-4 shadow-card">
+      </Card>
+      <Card>
         <h2 className="heading text-lg">Categories</h2>
         <div className="mt-3 space-y-2">
           {categories?.map((category) => (
@@ -112,21 +129,23 @@ function CategoriesSection() {
             >
               <span>{category.name}</span>
               <div className="flex gap-2">
-                <button
-                  className="text-xs font-semibold text-basil"
+                <Button
+                  tone="ghost"
+                  size="sm"
                   onClick={() => {
                     setEditing(category);
                     setName(category.name);
                   }}
                 >
                   Edit
-                </button>
-                <button
-                  className="text-xs font-semibold text-rose"
-                  onClick={() => deleteMutation.mutate(category.id)}
+                </Button>
+                <Button
+                  tone="danger"
+                  size="sm"
+                  onClick={() => handleDelete(category)}
                 >
                   Delete
-                </button>
+                </Button>
               </div>
             </div>
           ))}
@@ -134,13 +153,15 @@ function CategoriesSection() {
             <p className="text-sm text-slate-500">No categories yet.</p>
           )}
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
 
 function ProductsSection() {
   const queryClient = useQueryClient();
+  const toast = useToast();
+  const { confirm } = useConfirm();
   const [form, setForm] = useState({
     name: "",
     sku: "",
@@ -185,6 +206,7 @@ function ProductsSection() {
       queryClient.invalidateQueries({ queryKey: ["admin-products"] });
       setEditing(null);
       setForm({ name: "", sku: "", category_id: "", price: "", cost: "" });
+      toast.success("Product saved");
     },
   });
 
@@ -194,70 +216,82 @@ function ProductsSection() {
       queryClient.invalidateQueries({ queryKey: ["admin-products"] }),
   });
 
+  const handleDelete = async (product: Product) => {
+    const ok = await confirm({
+      title: "Delete product?",
+      description: `This will remove ${product.name}.`,
+      confirmText: "Delete",
+      tone: "danger",
+      requireTextConfirm: "DELETE",
+    });
+    if (!ok) return;
+    await deleteMutation.mutateAsync(product.id);
+    toast.success("Product deleted");
+  };
+
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
-      <div className="rounded-2xl bg-white p-4 shadow-card">
+    <div className="grid gap-4 lg:grid-cols-[1fr_1.3fr]">
+      <Card>
         <h2 className="heading text-lg">Product Editor</h2>
-        <div className="mt-3 space-y-2">
-          <input
-            className="w-full rounded-xl border-slate-200"
-            placeholder="Name"
+        <div className="mt-3 space-y-3">
+          <Input
+            label="Name"
             value={form.name}
             onChange={(event) =>
               setForm((prev) => ({ ...prev, name: event.target.value }))
             }
           />
-          <input
-            className="w-full rounded-xl border-slate-200"
-            placeholder="SKU"
+          <Input
+            label="SKU"
             value={form.sku}
             onChange={(event) =>
               setForm((prev) => ({ ...prev, sku: event.target.value }))
             }
           />
-          <select
-            className="w-full rounded-xl border-slate-200"
-            value={form.category_id}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, category_id: event.target.value }))
-            }
-          >
-            <option value="">Select category</option>
-            {categories?.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </select>
+          <label className="text-xs font-semibold uppercase text-slate-500">
+            Category
+            <select
+              className="mt-1 w-full rounded-xl border-slate-200 text-sm"
+              value={form.category_id}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  category_id: event.target.value,
+                }))
+              }
+            >
+              <option value="">Select category</option>
+              {categories?.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="grid grid-cols-2 gap-2">
-            <input
+            <Input
+              label="Price"
               type="number"
-              className="rounded-xl border-slate-200"
-              placeholder="Price"
               value={form.price}
               onChange={(event) =>
                 setForm((prev) => ({ ...prev, price: event.target.value }))
               }
             />
-            <input
+            <Input
+              label="Cost"
               type="number"
-              className="rounded-xl border-slate-200"
-              placeholder="Cost"
               value={form.cost}
               onChange={(event) =>
                 setForm((prev) => ({ ...prev, cost: event.target.value }))
               }
             />
           </div>
-          <button
-            className="rounded-xl bg-basil px-4 py-2 text-sm font-semibold text-white"
-            onClick={() => saveMutation.mutate()}
-          >
+          <Button onClick={() => saveMutation.mutate()}>
             {editing ? "Update" : "Create"}
-          </button>
+          </Button>
         </div>
-      </div>
-      <div className="rounded-2xl bg-white p-4 shadow-card">
+      </Card>
+      <Card>
         <h2 className="heading text-lg">Products</h2>
         <div className="mt-3 space-y-2">
           {products?.map((product) => (
@@ -270,11 +304,10 @@ function ProductsSection() {
                 <p className="text-xs text-slate-500">{product.sku}</p>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-basil">
-                  {formatPhp(Number(product.price))}
-                </span>
-                <button
-                  className="text-xs font-semibold text-basil"
+                <Badge tone="info">{formatPhp(Number(product.price))}</Badge>
+                <Button
+                  tone="ghost"
+                  size="sm"
                   onClick={() => {
                     setEditing(product);
                     setForm({
@@ -287,13 +320,10 @@ function ProductsSection() {
                   }}
                 >
                   Edit
-                </button>
-                <button
-                  className="text-xs font-semibold text-rose"
-                  onClick={() => deleteMutation.mutate(product.id)}
-                >
+                </Button>
+                <Button tone="danger" size="sm" onClick={() => handleDelete(product)}>
                   Delete
-                </button>
+                </Button>
               </div>
             </div>
           ))}
@@ -301,13 +331,15 @@ function ProductsSection() {
             <p className="text-sm text-slate-500">No products yet.</p>
           )}
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
 
 function TablesSection() {
   const queryClient = useQueryClient();
+  const toast = useToast();
+  const { confirm } = useConfirm();
   const [form, setForm] = useState({ name: "", capacity: "2" });
   const [editing, setEditing] = useState<DiningTable | null>(null);
 
@@ -335,6 +367,7 @@ function TablesSection() {
       queryClient.invalidateQueries({ queryKey: ["admin-tables"] });
       setEditing(null);
       setForm({ name: "", capacity: "2" });
+      toast.success("Table saved");
     },
   });
 
@@ -344,37 +377,44 @@ function TablesSection() {
       queryClient.invalidateQueries({ queryKey: ["admin-tables"] }),
   });
 
+  const handleDelete = async (table: DiningTable) => {
+    const ok = await confirm({
+      title: "Delete table?",
+      description: `This will remove ${table.name}.`,
+      confirmText: "Delete",
+      tone: "danger",
+    });
+    if (!ok) return;
+    await deleteMutation.mutateAsync(table.id);
+    toast.success("Table deleted");
+  };
+
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
-      <div className="rounded-2xl bg-white p-4 shadow-card">
+    <div className="grid gap-4 lg:grid-cols-[1fr_1.3fr]">
+      <Card>
         <h2 className="heading text-lg">Table Editor</h2>
-        <div className="mt-3 space-y-2">
-          <input
-            className="w-full rounded-xl border-slate-200"
-            placeholder="Table name"
+        <div className="mt-3 space-y-3">
+          <Input
+            label="Table name"
             value={form.name}
             onChange={(event) =>
               setForm((prev) => ({ ...prev, name: event.target.value }))
             }
           />
-          <input
+          <Input
+            label="Capacity"
             type="number"
-            className="w-full rounded-xl border-slate-200"
-            placeholder="Capacity"
             value={form.capacity}
             onChange={(event) =>
               setForm((prev) => ({ ...prev, capacity: event.target.value }))
             }
           />
-          <button
-            className="rounded-xl bg-basil px-4 py-2 text-sm font-semibold text-white"
-            onClick={() => saveMutation.mutate()}
-          >
+          <Button onClick={() => saveMutation.mutate()}>
             {editing ? "Update" : "Create"}
-          </button>
+          </Button>
         </div>
-      </div>
-      <div className="rounded-2xl bg-white p-4 shadow-card">
+      </Card>
+      <Card>
         <h2 className="heading text-lg">Tables</h2>
         <div className="mt-3 space-y-2">
           {tables?.map((table) => (
@@ -389,8 +429,9 @@ function TablesSection() {
                 </p>
               </div>
               <div className="flex gap-2">
-                <button
-                  className="text-xs font-semibold text-basil"
+                <Button
+                  tone="ghost"
+                  size="sm"
                   onClick={() => {
                     setEditing(table);
                     setForm({
@@ -400,13 +441,10 @@ function TablesSection() {
                   }}
                 >
                   Edit
-                </button>
-                <button
-                  className="text-xs font-semibold text-rose"
-                  onClick={() => deleteMutation.mutate(table.id)}
-                >
+                </Button>
+                <Button tone="danger" size="sm" onClick={() => handleDelete(table)}>
                   Delete
-                </button>
+                </Button>
               </div>
             </div>
           ))}
@@ -414,13 +452,14 @@ function TablesSection() {
             <p className="text-sm text-slate-500">No tables yet.</p>
           )}
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
 
 function UsersSection() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -461,51 +500,52 @@ function UsersSection() {
         is_active: true,
       });
       setEditingId(null);
+      toast.success("User saved");
     },
   });
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
-      <div className="rounded-2xl bg-white p-4 shadow-card">
+    <div className="grid gap-4 lg:grid-cols-[1fr_1.3fr]">
+      <Card>
         <h2 className="heading text-lg">
           {editingId ? "Edit User" : "Create User"}
         </h2>
         <div className="mt-3 space-y-2">
-          <input
-            className="w-full rounded-xl border-slate-200"
-            placeholder="Name"
+          <Input
+            label="Name"
             value={form.name}
             onChange={(event) =>
               setForm((prev) => ({ ...prev, name: event.target.value }))
             }
           />
-          <input
-            className="w-full rounded-xl border-slate-200"
-            placeholder="Email"
+          <Input
+            label="Email"
             value={form.email}
             onChange={(event) =>
               setForm((prev) => ({ ...prev, email: event.target.value }))
             }
           />
-          <input
-            className="w-full rounded-xl border-slate-200"
-            placeholder="Password"
+          <Input
+            label="Password"
             value={form.password}
             onChange={(event) =>
               setForm((prev) => ({ ...prev, password: event.target.value }))
             }
           />
-          <select
-            className="w-full rounded-xl border-slate-200"
-            value={form.role}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, role: event.target.value }))
-            }
-          >
-            <option value="admin">Admin</option>
-            <option value="cashier">Cashier</option>
-            <option value="kitchen">Kitchen</option>
-          </select>
+          <label className="text-xs font-semibold uppercase text-slate-500">
+            Role
+            <select
+              className="mt-1 w-full rounded-xl border-slate-200 text-sm"
+              value={form.role}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, role: event.target.value }))
+              }
+            >
+              <option value="admin">Admin</option>
+              <option value="cashier">Cashier</option>
+              <option value="kitchen">Kitchen</option>
+            </select>
+          </label>
           <label className="flex items-center gap-2 text-xs text-slate-500">
             <input
               type="checkbox"
@@ -516,15 +556,12 @@ function UsersSection() {
             />
             Active account
           </label>
-          <button
-            className="rounded-xl bg-basil px-4 py-2 text-sm font-semibold text-white"
-            onClick={() => createMutation.mutate()}
-          >
+          <Button onClick={() => createMutation.mutate()}>
             {editingId ? "Save Changes" : "Create User"}
-          </button>
+          </Button>
         </div>
-      </div>
-      <div className="rounded-2xl bg-white p-4 shadow-card">
+      </Card>
+      <Card>
         <h2 className="heading text-lg">Users</h2>
         <div className="mt-3 space-y-2">
           {users?.map((user) => (
@@ -537,11 +574,10 @@ function UsersSection() {
                 <p className="text-xs text-slate-500">{user.email}</p>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-basil">
-                  {user.roles?.join(", ")}
-                </span>
-                <button
-                  className="text-xs font-semibold text-basil"
+                <Badge tone="info">{user.roles?.join(", ")}</Badge>
+                <Button
+                  tone="ghost"
+                  size="sm"
                   onClick={() => {
                     setEditingId(user.id);
                     setForm({
@@ -554,7 +590,7 @@ function UsersSection() {
                   }}
                 >
                   Edit
-                </button>
+                </Button>
               </div>
             </div>
           ))}
@@ -562,13 +598,14 @@ function UsersSection() {
             <p className="text-sm text-slate-500">No users yet.</p>
           )}
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
 
 function InventorySection() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [adjustForm, setAdjustForm] = useState({
     product_id: "",
     quantity: "0",
@@ -593,43 +630,50 @@ function InventorySection() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["inventory-stocks"] });
+      toast.success("Stock updated");
     },
   });
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
-      <div className="rounded-2xl bg-white p-4 shadow-card">
+    <div className="grid gap-4 lg:grid-cols-[1fr_1.3fr]">
+      <Card>
         <h2 className="heading text-lg">Adjust Stock</h2>
         <div className="mt-3 space-y-2">
-          <select
-            className="w-full rounded-xl border-slate-200"
-            value={adjustForm.product_id}
-            onChange={(event) =>
-              setAdjustForm((prev) => ({
-                ...prev,
-                product_id: event.target.value,
-              }))
-            }
-          >
-            <option value="">Select product</option>
-            {stocks?.map((stock) => (
-              <option key={stock.product_id} value={stock.product_id}>
-                {stock.product?.name}
-              </option>
-            ))}
-          </select>
-          <select
-            className="w-full rounded-xl border-slate-200"
-            value={adjustForm.type}
-            onChange={(event) =>
-              setAdjustForm((prev) => ({ ...prev, type: event.target.value }))
-            }
-          >
-            <option value="restock">Restock</option>
-            <option value="adjustment">Adjustment</option>
-          </select>
-          <input
-            className="w-full rounded-xl border-slate-200"
+          <label className="text-xs font-semibold uppercase text-slate-500">
+            Product
+            <select
+              className="mt-1 w-full rounded-xl border-slate-200 text-sm"
+              value={adjustForm.product_id}
+              onChange={(event) =>
+                setAdjustForm((prev) => ({
+                  ...prev,
+                  product_id: event.target.value,
+                }))
+              }
+            >
+              <option value="">Select product</option>
+              {stocks?.map((stock) => (
+                <option key={stock.product_id} value={stock.product_id}>
+                  {stock.product?.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-semibold uppercase text-slate-500">
+            Type
+            <select
+              className="mt-1 w-full rounded-xl border-slate-200 text-sm"
+              value={adjustForm.type}
+              onChange={(event) =>
+                setAdjustForm((prev) => ({ ...prev, type: event.target.value }))
+              }
+            >
+              <option value="restock">Restock</option>
+              <option value="adjustment">Adjustment</option>
+            </select>
+          </label>
+          <Input
+            label="Quantity"
             type="number"
             value={adjustForm.quantity}
             onChange={(event) =>
@@ -639,15 +683,10 @@ function InventorySection() {
               }))
             }
           />
-          <button
-            className="rounded-xl bg-basil px-4 py-2 text-sm font-semibold text-white"
-            onClick={() => adjustMutation.mutate()}
-          >
-            Save Adjustment
-          </button>
+          <Button onClick={() => adjustMutation.mutate()}>Save Adjustment</Button>
         </div>
-      </div>
-      <div className="rounded-2xl bg-white p-4 shadow-card">
+      </Card>
+      <Card>
         <h2 className="heading text-lg">Stock Levels</h2>
         <div className="mt-3 space-y-2">
           {stocks?.map((stock) => (
@@ -676,7 +715,7 @@ function InventorySection() {
             Low stock items are highlighted in red.
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }
@@ -753,7 +792,7 @@ function ReportsSection() {
   });
 
   return (
-    <div className="rounded-2xl bg-white p-4 shadow-card">
+    <Card>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 className="heading text-lg">Daily Summary</h2>
@@ -763,7 +802,7 @@ function ReportsSection() {
         </div>
         <input
           type="date"
-          className="rounded-xl border-slate-200"
+          className="rounded-xl border-slate-200 text-sm"
           value={date}
           onChange={(event) => setDate(event.target.value)}
         />
@@ -833,7 +872,7 @@ function ReportsSection() {
           </p>
         )}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -848,21 +887,25 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function SettingsSection() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [form, setForm] = useState({ tax_rate: 12, service_charge_rate: 0 });
 
-  useQuery({
+  const { data: settings } = useQuery({
     queryKey: ["settings-pos-admin"],
     queryFn: async () => {
       const response = await api.get<{ data: { value: any } }>("/settings/pos");
       return response.data.data.value;
     },
-    onSuccess: (data) => {
-      setForm({
-        tax_rate: Number(data.tax_rate ?? 0),
-        service_charge_rate: Number(data.service_charge_rate ?? 0),
-      });
-    },
   });
+
+  useEffect(() => {
+    if (settings) {
+      setForm({
+        tax_rate: Number(settings.tax_rate ?? 0),
+        service_charge_rate: Number(settings.service_charge_rate ?? 0),
+      });
+    }
+  }, [settings]);
 
   const updateMutation = useMutation({
     mutationFn: async () =>
@@ -870,53 +913,42 @@ function SettingsSection() {
         tax_rate: Number(form.tax_rate),
         service_charge_rate: Number(form.service_charge_rate),
       }),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["settings-pos-admin"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["settings-pos-admin"] });
+      toast.success("Settings updated");
+    },
   });
 
   return (
-    <div className="rounded-2xl bg-white p-4 shadow-card">
+    <Card>
       <h2 className="heading text-lg">POS Settings</h2>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="text-xs font-semibold uppercase text-slate-500">
-            Tax %
-          </label>
-          <input
-            type="number"
-            className="mt-1 w-full rounded-xl border-slate-200"
-            value={form.tax_rate}
-            onChange={(event) =>
-              setForm((prev) => ({
-                ...prev,
-                tax_rate: Number(event.target.value),
-              }))
-            }
-          />
-        </div>
-        <div>
-          <label className="text-xs font-semibold uppercase text-slate-500">
-            Service Charge %
-          </label>
-          <input
-            type="number"
-            className="mt-1 w-full rounded-xl border-slate-200"
-            value={form.service_charge_rate}
-            onChange={(event) =>
-              setForm((prev) => ({
-                ...prev,
-                service_charge_rate: Number(event.target.value),
-              }))
-            }
-          />
-        </div>
+        <Input
+          label="Tax %"
+          type="number"
+          value={form.tax_rate}
+          onChange={(event) =>
+            setForm((prev) => ({
+              ...prev,
+              tax_rate: Number(event.target.value),
+            }))
+          }
+        />
+        <Input
+          label="Service Charge %"
+          type="number"
+          value={form.service_charge_rate}
+          onChange={(event) =>
+            setForm((prev) => ({
+              ...prev,
+              service_charge_rate: Number(event.target.value),
+            }))
+          }
+        />
       </div>
-      <button
-        className="mt-4 rounded-xl bg-basil px-4 py-2 text-sm font-semibold text-white"
-        onClick={() => updateMutation.mutate()}
-      >
+      <Button className="mt-4" onClick={() => updateMutation.mutate()}>
         Save Settings
-      </button>
-    </div>
+      </Button>
+    </Card>
   );
 }
